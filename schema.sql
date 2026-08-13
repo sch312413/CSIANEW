@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS settings (
 INSERT INTO settings (settings_id, max_working, min_break, max_session_minutes)
 VALUES (1, 480, 15, 60);
 
-INSERT INTO events (title, event_type, whole_day, recurrence, starting_datetime, ending_datetime)
+INSERT INTO events (title, whole_day, recurrence, starting_datetime, ending_datetime)
 VALUES
     ('CS class', 'class', 0, 'Mon', '2026-09-07T09:00', '2026-09-07T10:00'),
     ('Math class', 'class', 0, 'Tue,Thu', '2026-09-08T11:00', '2026-09-08T12:00'),
