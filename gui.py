@@ -43,8 +43,8 @@ class SmartCalendarApp:
 
         add_task = ttk.Button(toolbar, text="+ Add task", command=self.task_popup).pack(side="left", padx = 5)
         add_event = ttk.Button(toolbar, text="+ Add event", command=self.event_popup).pack(side="left", padx = 5)
-        add_session = ttk.Button(toolbar, text="+ Add work session").pack(side="left", padx = 5)
-        preferences = ttk.Button(toolbar, text="Settings").pack(side="left", padx = 5)
+        window = ttk.Button(toolbar, text="+ Daily unavailable window", command=self.preferences).pack(side="left", padx = 5)
+        settings = ttk.Button(toolbar, text="Settings", command=self.settings).pack(side="left", padx = 5)
 
     def bottom_bar(self, root):
         bottombar = ttk.Frame(root)
@@ -68,33 +68,49 @@ class SmartCalendarApp:
             width=600, 
             height=650
             )
-
+        
+        self.date_selected = self.cal.selection_get()
         self.cal.pack(side="left", fill="both", expand=True, padx=(0, 10))
-        # self.cal.bind("<DateSelect>", self.date_selected)
+        self.cal.bind("<<CalendarSelected>>", self.date_selected)
 
         right = ttk.Frame(container)
         right.pack(side="left", fill="both")
 
         right_title = ttk.Label(right, text="Items for the day: ").pack()
-        columns = ('Time', "Title", "Type", "Status")
-        self.day_list = ttk.Treeview(right, columns=columns, show="headings", height=15)
-        for col in columns:
-            self.day_list.heading(col)
-        self.day_list.pack(fill="both")
+        task_column = ("Title", 'Time', "Type", "Status")
+        self.day_list = ttk.Treeview(right, columns=task_column, show="headings", height=15)
+
+        my_date = self.cal.selection_get()
+        tasks, work_seshs, events = self.get_all_information()
+        for task in tasks:
+            if task["date"] == my_date:
+                self.day_list.insert("", "end", values=(task["title"], task["time"], task["status"], task["type"]))        
+
+        task_column = ("Title", 'Time', "Type", "Status")
+        self.day_list = ttk.Treeview(right, columns=task_column, show="headings", height=15)
+        for sesh in work_seshs:
+            if task["date"] == my_date:
+                # "Task name": row["title"], "date": start_dt.date(), "Start time": start_dt.time(), "End time": end_dt.time(), "status": row["status_now"]
+                self.day_list.insert("", "end", values=(sesh["title"], sesh["Start time"], sesh["End time"], sesh["type"], sesh["status"]))   
+
+                     
 
     def get_all_information(self):
         conn = get_db()
-        items = []
-        for row in conn.execute("SELECT title, due_time, status_now FROM tasks WHERE status_now = 'active"):
+        tasks, work_sesh, events = [], [], []
+        for row in conn.execute("SELECT title, due_time, status_now FROM tasks"):
             dt = datetime.fromisoformat(row["due_time"])
-            items.append({"title": row["title"], "date": dt.date(), "time": dt.time(), "status": row["status_now"], "type": "Active task"})
-        for row in conn.execute("SELECT title, due_time, status_now FROM tasks WHERE status_now = 'suggested"):
-            dt = datetime.fromisoformat(row["due_time"])
-            items.append({"title": row["title"], "date": dt.date(), "time": dt.time(), "status": row["status_now"], "type": "Active task"})
+            tasks.append({"title": row["title"], "date": dt.date(), "due time": dt.time(), "status": row["status_now"], "type": row["status now"]})
+        for row in conn.execute("SELECT task_id, start_time, end_time, status_now FROM work_session"):
+            start_dt = datetime.fromisoformat(row["start_time"])
+            end_dt = datetime.fromisoformat(row["end_time"])
+            conn.execute(f"SELECT title FROM tasks WHERE task_id = f{row["task_id"]}")
+            work_sesh.append({"Task name": row["title"], "date": start_dt.date(), "Start time": start_dt.time(), "End time": end_dt.time(), "status": row["status_now"]})
         for row in conn.execute("SELECT event_id, title, starting_datetime, ending_datetime FROM events"):
             dt_start = datetime.fromisoformat(row["starting_datetime"])
             dt_end = datetime.fromisoformat(row["ending_datetime"])
-            items.append({"title": row["title"], "date": dt_start.date(), "start_time": dt_start.time(), "end_time": dt_end.time(), "status": '-', "type": "Event"})
+            events.append({"title": row["title"], "date": dt_start.date(), "start_time": dt_start.time(), "end_time": dt_end.time(), "status": '-', "type": "Event"})
+        return tasks, work_sesh, events 
 
     def task_popup(self):
         self.t_popup = tk.Toplevel(self.root)
@@ -180,9 +196,10 @@ class SmartCalendarApp:
         ttk.Label(self.recurrence, text="Recurrence").grid(row=0, column=0, padx=10, pady=10)
         
         self.days_button = {}
+        self.days_checked = []
         for i in range(len(DAYS)):
-            curr = tk.IntVar()
-            self.days_button[DAYS[i]] = ttk.Checkbutton(self.recurrence, text=days[i], variable=curr)
+            self.days_checked.append(tk.IntVar())
+            self.days_button[DAYS[i]] = ttk.Checkbutton(self.recurrence, text=DAYS[i], variable=self.days_checked[i])
             self.days_button[DAYS[i]].grid(row=1, column=i, padx=10, pady=10)
 
         ttk.Label(self.non_whole_day, text="Event start date (YYYY-MM-DDTHH:MM)").grid(row=1, column=0, padx=10, pady=10)
@@ -235,7 +252,7 @@ class SmartCalendarApp:
         try: check_end = datetime.fromisoformat(end)
         except: check_end = -1 
 
-        if check_start == -1 or check_end == 1:
+        if check_start == -1 or check_end == -1:
             messagebox.showwarning("Error", "Please follow the exact date format!")
             return  
 
@@ -259,20 +276,19 @@ class SmartCalendarApp:
             messagebox.showwarning("Error", "Please fill in all text fields!")
             return 
 
-        recur = []
+        recur = ''
         for i in range(len(DAYS)):
-            if self.days_button[DAYS[i]].get().strip() == 1:
-                recur.append(DAYS[i])
+            if self.days_checked[i].get() == 1:
+                recur+=f"{DAYS[i]},"
         if not recur:
-            recur.append(None)
-
+            recur = None
 
         try: check_start = datetime.fromisoformat(start)
         except: check_start = -1 
         try: check_end = datetime.fromisoformat(end)
         except: check_end = -1 
 
-        if check_start == -1 or check_end == 1:
+        if check_start == -1 or check_end == -1:
             messagebox.showwarning("Error", "Please follow the exact date format!")
             return  
 
@@ -286,7 +302,118 @@ class SmartCalendarApp:
         conn.close()
         self.e_popup.destroy() 
 
-         
+    def settings(self):
+        self.w_popup = tk.Toplevel(self.root)
+        self.w_popup.title("Preferences")
+
+        # Settings
+        ttk.Label(self.w_popup, text="Settings").grid(row=0, column=0, padx=10, pady=10)
+
+        # max working 
+        ttk.Label(self.w_popup, text="Maximum working minute per day").grid(row=1, column=0, padx=10, pady=10)
+        self.w_daylim_entry = ttk.Entry(self.w_popup, width=30)
+        self.w_daylim_entry.grid(row=1, column=1, padx=10, pady=5)
+
+        # min break 
+        ttk.Label(self.w_popup, text="Minimum break between work sessions").grid(row=2, column=0, padx=10, pady=10)
+        self.w_minb_entry = ttk.Entry(self.w_popup, width=30)
+        self.w_minb_entry.grid(row=2, column=1, padx=10, pady=5)
+
+        # max session  
+        ttk.Label(self.w_popup, text="Maximum session minutes").grid(row=3, column=0, padx=10, pady=10)
+        self.w_maxs_entry = ttk.Entry(self.w_popup, width=30)
+        self.w_maxs_entry.grid(row=3, column=1, padx=10, pady=5)
+
+        # submit 
+        self.w_submit_s = ttk.Button(self.w_popup, text="Submit settings", command=self.settings_submit)
+        self.w_submit_s.grid(row=4, column=0, padx=10, pady=5)     
+
+    def settings_submit(self):
+        max_work = self.w_daylim_entry.get().strip()
+        min_break = self.w_minb_entry.get().strip()
+        max_sesh = self.w_maxs_entry.get().strip()
+
+        if not max_work or not min_break or not max_sesh:
+            messagebox.showwarning("Error", "Please fill in all text fields!")
+            return 
+
+        try: max_work = int(max_work) 
+        except: 
+            messagebox.showwarning("Error", "'Maximum working minute' must be an integer!") 
+            return 
+
+        try: min_break = int(min_break) 
+        except: 
+            messagebox.showwarning("Error", "'Minimum break between work sessions' must be an integer!") 
+            return 
+
+        try: max_sesh = int(max_sesh) 
+        except: 
+            messagebox.showwarning("Error", "'Maximum session minutes' must be an integer!") 
+            return 
+
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute(
+        "UPDATE settings "
+        "SET settings_id = 1, max_working = ?, min_break = ?, max_session_minutes = ?", 
+        (max_work, min_break, max_sesh)
+        )     
+        conn.commit()
+        conn.close()
+        self.w_popup.destroy()       
+
+    def preferences(self):
+        # unavailable windows
+        self.s_popup = tk.Toplevel(self.root)
+        self.s_popup.title("Settings")
+        ttk.Label(self.s_popup, text="Daily unavailable time window").grid(row=0, column=0, padx=10, pady=10)
+
+        # title
+        ttk.Label(self.s_popup, text="Title").grid(row=1, column=0, padx=10, pady=10)
+        self.w_title_entry = ttk.Entry(self.s_popup, width=30)
+        self.w_title_entry.grid(row=1, column=1, padx=10, pady=5)
+
+        # start time
+        ttk.Label(self.s_popup, text="Start time (HH:mm)").grid(row=2, column=0, padx=10, pady=10)
+        self.w_start_entry = ttk.Entry(self.s_popup, width=30)
+        self.w_start_entry.grid(row=2, column=1, padx=10, pady=5)       
+    
+        # end time
+        ttk.Label(self.s_popup, text="End time (HH:mm)").grid(row=3, column=0, padx=10, pady=10)
+        self.w_end_entry = ttk.Entry(self.s_popup, width=30)
+        self.w_end_entry.grid(row=3, column=1, padx=10, pady=5) 
+
+        # submit 
+        self.w_submit_u = ttk.Button(self.s_popup, text="Submit window", command=self.preferences_submit)
+        self.w_submit_u.grid(row=4, column=0, padx=10, pady=5)   
+
+    def preferences_submit(self):
+        title = self.w_title_entry.get().strip()
+        start = self.w_start_entry.get().strip()
+        end = self.w_end_entry.get().strip()
+
+        if not title or not start or not end:
+            messagebox.showwarning("Error", "Please fill in all text fields!")
+            return 
+
+        try: 
+            check_start = datetime.strptime(start, "%H:%M").time() 
+            check_end = datetime.strptime(end, "%H:%M").time()
+        except: 
+            messagebox.showwarning("Error", "Please follow the time format given!") 
+            return 
+
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute(
+        "INSERT INTO unavailable_windows (title, unavailable_start, unavailable_end)" \
+        "VALUES (?, ?, ?)", 
+        (title, start, end)
+        )     
+        conn.commit()
+        conn.close()
+        self.s_popup.destroy()   
+
+           
 root = tk.Tk()
 calendar = SmartCalendarApp(root)
 style = ttk.Style()

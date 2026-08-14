@@ -33,8 +33,7 @@ CREATE TABLE IF NOT EXISTS unavailable_windows (
     rule_id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
     unavailable_start TEXT NOT NULL,
-    unavailable_end TEXT NOT NULL,
-    recurrence TEXT  -- [none, mon tue..., daily]
+    unavailable_end TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -67,7 +66,7 @@ VALUES
     (1, '2026-09-03T14:00', '2026-09-03T15:00', 'suggested'),
     (3, '2026-09-01T10:00', '2026-09-01T10:45', 'completed');
 
-INSERT INTO unavailable_windows (title, unavailable_start, unavailable_end, recurrence)
+INSERT INTO unavailable_windows (title, unavailable_start, unavailable_end)
 VALUES
-    ('Sleep', '23:00', '07:00', 'daily'),
-    ('Dinner', '18:00', '19:00', 'daily');
+    ('Sleep', '23:00', '07:00'),
+    ('Dinner', '18:00', '19:00');

@@ -34,15 +34,6 @@ def accepted_blocks():
     conn.close()
     return accepted_working
 
-def unavailable_slots():
-    conn = sqlite3.connect("database.db") 
-    unavailable_slots = conn.execute(
-            """SELECT title, unavailable_start, unavailable_end, recurrence
-            FROM unavailable_windows WHERE NOT recurrence = "daily"
-            """).fetchall()
-    conn.close()  
-    return unavailable_slots
-
 def load_constraints_tasks():
     conn = sqlite3.connect("database.db")
     user_pref = conn.execute(
@@ -77,9 +68,8 @@ def day_unavailable():
     whole_day = time_phase(0, 23, 0, 59)
     conn = sqlite3.connect("database.db")
     unavailable_slots = conn.execute(
-            """SELECT title, unavailable_start, unavailable_end, recurrence
+            """SELECT title, unavailable_start, unavailable_end
             FROM unavailable_windows
-            WHERE recurrence = "daily"
             """
         ).fetchall()
     conn.close()
@@ -117,17 +107,6 @@ def fixed_before_time(window_start, window_end): # both should be datetime alrea
                 if cursor.strftime("%a") in repeated_days:
                     concrete_blocks.append((datetime.combine(cursor.date(), starting_datetime.time()), datetime.combine(cursor.date(), ending_datetime.time())))
                 cursor += timedelta(days=1)
-    # unavailable slot always - non events 
-    unavailable_slot = unavailable_slots()
-    for slot in unavailable_slot:
-        start, end, recurrence = datetime.fromisoformat(slot[1]), datetime.fromisoformat(slot[2]), slot[3]
-        repeated_days = recurrence.split(',')
-
-        cursor = window_start
-        while cursor <= window_end:
-            if cursor.strftime("%a") in repeated_days:
-                concrete_blocks.append((datetime.combine(cursor.date(), start.time()), datetime.combine(cursor.date(), end.time())))
-            cursor += timedelta(days=1)
     # accepted blocks 
     working_alr = accepted_blocks()
     for work_sesh in working_alr:
@@ -336,6 +315,3 @@ if __name__ == "__main__":
 
     print(best)
         
-
-
-
