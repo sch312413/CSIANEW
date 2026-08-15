@@ -312,4 +312,4 @@ def genetic_algor(population_size, generations, mutation_rate):
 
 if __name__ == "__main__":
     best = genetic_algor(30, 60, 0.1)
-        
+    print(best)

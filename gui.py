@@ -2,7 +2,7 @@ import os
 import sqlite3
 import tkinter as tk
 from tkinter import ttk, messagebox
-from datetime import datetime
+from datetime import datetime, timedelta
 from tkcalendar import Calendar
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "database.db")
@@ -23,7 +23,7 @@ def get_db():
 
 ensure_db()
 
-DAYS = ["Mon", "Tues", "Wed", "Thu", "Fri", "Sat", "Sun"]
+DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 import genetic3
 class SmartCalendarApp:
     def __init__(self, root):
@@ -31,7 +31,6 @@ class SmartCalendarApp:
         root.title("Smart Calendar")
         root.geometry("1960x1000")
 
-        self.all_itms = []
         self.toolbar(root)
         self.calendar(root)
         self.bottom_bar(root)
@@ -49,13 +48,21 @@ class SmartCalendarApp:
     def bottom_bar(self, root):
         bottombar = ttk.Frame(root)
         bottombar.pack(fill="x", padx = 10, pady = 10)
-        add_event = ttk.Button(bottombar, text="Generate smart schedule").pack(side="left", padx = 5)
-        add_session = ttk.Button(bottombar, text="Accept selected").pack(side="left", padx = 5)
-        preferences = ttk.Button(bottombar, text="Delete selected").pack(side="left", padx = 5)
+        smart_schedule = ttk.Button(bottombar, text="Generate smart schedule", command=self.generate_work).pack(side="left", padx = 5)
+        acccept_work = ttk.Button(bottombar, text="Accept work session", command=self.accept_selected).pack(side="left", padx = 5)
+        complete_work = ttk.Button(bottombar, text="Complete task", command=self.complete_task).pack(side="left", padx = 5)
+        delete = ttk.Button(bottombar, text="Delete selected item", command=self.delete_item).pack(side="left", padx = 5)
 
     def calendar(self, root):
         container = ttk.Frame(root)
         container.pack(fill="both", expand=True, padx=10, pady=5)
+
+        self.left = ttk.Frame(container)
+        self.left.pack(side="left")
+        self.all_column = ("Title", 'Item Type', "Date")
+        self.all_list = ttk.Treeview(self.left, columns=self.all_column, show="headings", height=43)
+        self.all_list.pack()
+
         self.cal = Calendar(
             container, 
             selectmode = "day", 
@@ -71,18 +78,22 @@ class SmartCalendarApp:
         self.cal.bind("<<CalendarSelected>>", self.date_selected)
         self.right = ttk.Frame(container)
         self.right.pack(side="left", fill="both")
-
         
         self.event_column = ("Title", 'Starting Time', "Ending Time")
-        self.event_list = ttk.Treeview(self.right, columns=self.event_column, show="headings", height=8)
+        self.event_list = ttk.Treeview(self.right, columns=self.event_column, show="headings", height=6)
+        for c in self.event_column: self.event_list.heading(c, text=c); self.event_list.column(c, width=250 if c=="Title" else 150, stretch=False)
         
         self.task_column = ("Title", 'Time', "Status")
-        self.task_list = ttk.Treeview(self.right, columns=self.task_column, show="headings", height=8)
-        for c in self.task_column: self.task_list.heading(c, text=c); self.task_list.column(c, width=350 if c=="Title" else 200, stretch=False)
+        self.task_list = ttk.Treeview(self.right, columns=self.task_column, show="headings", height=6)
+        for c in self.task_column: self.task_list.heading(c, text=c); self.task_list.column(c, width=250 if c=="Title" else 150, stretch=False)
 
         self.session_column = ("Title", 'Starting time', "Ending time", "Status")
-        self.session_list = ttk.Treeview(self.right, columns=self.session_column, show="headings", height=8)
-        for c in self.session_column: self.session_list.heading(c, text=c); self.session_list.column(c, width=300 if c=="Title" else 150, stretch=False)
+        self.session_list = ttk.Treeview(self.right, columns=self.session_column, show="headings", height=6)
+        for c in self.session_column: self.session_list.heading(c, text=c); self.session_list.column(c, width=250 if c=="Title" else 100, stretch=False)
+
+        self.window_column = ("Title", 'Starting time', "Ending time")
+        self.window_list = ttk.Treeview(self.right, columns=self.window_column, show="headings", height=6)
+        for c in self.window_column: self.window_list.heading(c, text=c); self.window_list.column(c, width=250 if c=="Title" else 150, stretch=False)
 
         ttk.Label(self.right, text="Events for the day").pack(pady=10)
         self.event_list.pack()
@@ -90,64 +101,158 @@ class SmartCalendarApp:
         self.task_list.pack()
         ttk.Label(self.right, text="Work sessions for the day").pack(pady=10)
         self.session_list.pack()
+        ttk.Label(self.right, text="Daily unavailable windows").pack(pady=10)
+        self.window_list.pack()
 
         self.date_selected()
 
     def date_selected(self, event=None):
         selected = self.cal.selection_get()
-        tasks, work_seshs, events = self.get_all_information()
+        tasks, work_seshs, events, self.all_items = self.get_all_information()
+        self.all_items.sort(key=lambda item: item["date"])
 
         for item in self.event_list.get_children(): self.event_list.delete(item)
         for item in self.task_list.get_children(): self.task_list.delete(item)
         for item in self.session_list.get_children(): self.session_list.delete(item)
+        for item in self.window_list.get_children(): self.window_list.delete(item)
+        for item in self.all_list.get_children(): self.all_list.delete(item)
 
-        for c in self.event_column: self.event_list.heading(c, text=c); self.event_list.column(c, width=350 if c=="Title" else 200, stretch=False)
         for event in events:
             if event["whole_day"] == 0:
                 if event["recurrence"] == None:
                     if event["date"] == selected:
-                        self.event_list.insert("", "end", values=(event["title"], event["starting_datetime"], event["ending_datetime"])) 
+                        self.event_list.insert("", "end", iid=event["event_id"], values=(event["title"], event["starting_datetime"], event["ending_datetime"])) 
                 else:
                     days = event["recurrence"].split(',')
-                    if (selected.strftime('%A')[:3] in days) and selected > event["date"]:
-                        self.event_list.insert("", "end", values=(event["title"], event["starting_datetime"], event["ending_datetime"])) 
+                    if (selected.strftime('%A')[:3] in days) and selected >= event["date"]:
+                        self.event_list.insert("", "end", iid=event["event_id"], values=(event["title"], event["starting_datetime"], event["ending_datetime"])) 
 
             else:
                 if event["starting_datetime"] <= selected and event["ending_datetime"] >= selected:
-                    self.event_list.insert("", "end", values=(event["title"], event["starting_datetime"], event["ending_datetime"])) 
+                    self.event_list.insert("", "end", iid=event["event_id"], values=(event["title"], event["starting_datetime"], event["ending_datetime"])) 
 
         for task in tasks:
             if task["date"] == selected: 
-                self.task_list.insert("", "end", values=(task["title"], task["due_time"], task["status"]))         
+                self.task_list.insert("", "end", iid=task["task_id"], values=(task["title"], task["due_time"], task["status"]))         
 
         for sesh in work_seshs:
             if sesh["date"] == selected:
                 # "Task name": row["title"], "date": start_dt.date(), "Start time": start_dt.time(), "End time": end_dt.time(), "status": row["status_now"]
-                self.session_list.insert("", "end", values=(sesh["title"], sesh["start_time"], sesh["end_time"], sesh["status"]))  
+                self.session_list.insert("", "end", iid=sesh["session_id"], values=(sesh["title"], sesh["start_time"], sesh["end_time"], sesh["status"]))  
 
+        conn = get_db()
+        windows = conn.execute("SELECT rule_id, title, unavailable_start, unavailable_end FROM unavailable_windows")
+        for window in windows:
+            self.window_list.insert("", "end", iid=window["rule_id"], values=(window["title"], window["unavailable_start"], window["unavailable_end"]))
+        # self.window_list.insert()
+        conn.close()
+
+        for c in self.all_column: self.all_list.heading(c, text=c); self.all_list.column(c, width=150 if c=="Title" else 100, stretch=False)
+        for ind in self.all_items:
+            self.all_list.insert("", "end", values=(ind["title"], ind["type"], ind["date"]))
+            
     def get_all_information(self):
         conn = get_db()
-        tasks, work_sesh, events = [], [], []
-        for row in conn.execute("SELECT title, due_time, status_now FROM tasks"):
+        tasks, work_sesh, events, all = [], [], [], []
+        for row in conn.execute("SELECT task_id, title, due_time, status_now FROM tasks"):
             dt = datetime.fromisoformat(row["due_time"])
-            tasks.append({"title": row["title"], "date": dt.date(), "due_time": dt.time(), "status": row["status_now"]})
-        for row in conn.execute("SELECT task_id, start_time, end_time, status_now FROM work_sessions"):
+            tasks.append({"task_id": row["task_id"], "title": row["title"], "date": dt.date(), "due_time": dt.time(), "status": row["status_now"]})
+            all.append({"type": "Event", "title": row["title"], "date": dt.date()})
+        for row in conn.execute("SELECT session_id, task_id, start_time, end_time, status_now FROM work_sessions"):
             start_dt = datetime.fromisoformat(row["start_time"])
             end_dt = datetime.fromisoformat(row["end_time"])
-            title = conn.execute(f"SELECT title FROM tasks WHERE task_id = {row["task_id"]}").fetchone()
-            work_sesh.append({"title": title["title"], "date": start_dt.date(), "start_time": start_dt.time(), "end_time": end_dt.time(), "status": row["status_now"]})
+            title = conn.execute("SELECT title FROM tasks WHERE task_id = ?", (row["task_id"],)).fetchone()
+            work_sesh.append({"session_id": row["session_id"], "title": title["title"], "date": start_dt.date(), "start_time": start_dt.time(), "end_time": end_dt.time(), "status": row["status_now"]})
+            all.append({"type": "Work Session", "title": title["title"], "date": start_dt.date()})
         for row in conn.execute("SELECT event_id, title, starting_datetime, ending_datetime, whole_day, recurrence FROM events"):
             dt_start = datetime.fromisoformat(row["starting_datetime"])
             dt_end = datetime.fromisoformat(row["ending_datetime"])
+            curr = dt_start
+            while True:
+                all.append({"type": "Event", "title": row["title"], "date": curr.date()})
+                curr += timedelta(days=1)
+                if curr.date() > dt_end.date():
+                    break
+
             if row["whole_day"] == 0:
-                events.append({"recurrence": row["recurrence"], "whole_day": row["whole_day"], "title": row["title"], "date": dt_start.date(), "starting_datetime": dt_start.time(), "ending_datetime": dt_end.time()})
+                events.append({"event_id": row["event_id"], "recurrence": row["recurrence"], "whole_day": row["whole_day"], "title": row["title"], "date": dt_start.date(), "starting_datetime": dt_start.time(), "ending_datetime": dt_end.time()})
             else:
-                events.append({"whole_day": row["whole_day"], "title": row["title"], "date": dt_start.date(), "starting_datetime": dt_start.date(), "ending_datetime": dt_end.date()})                
+                events.append({"event_id": row["event_id"], "whole_day": row["whole_day"], "title": row["title"], "date": dt_start.date(), "starting_datetime": dt_start.date(), "ending_datetime": dt_end.date()})                  
         # print(tasks, work_sesh, events)
-        return tasks, work_sesh, events 
+        return tasks, work_sesh, events, all
+
+    def accept_selected(self):
+        selected = self.session_list.selection()
+        if not selected:
+            messagebox.showinfo("Nothing selected", "Click a work session first.")
+            return
+        session_id = selected[0]
+
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("UPDATE work_sessions SET status_now = 'accepted' WHERE session_id = ?", (session_id,))
+        conn.commit()
+        conn.close()
+        self.date_selected()    
+
+    def complete_task(self):
+        selected = self.task_list.selection()
+        if not selected:
+            messagebox.showinfo("Nothing selected", "Click on a task first.")
+            return
+
+        status = self.task_list.item(selected[0], "values")[2]
+
+        if status != "active":
+            messagebox.showinfo("Error", "Click an active task first.")
+            return 
+
+        task_id = selected[0]
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("UPDATE tasks SET status_now = 'completed' WHERE task_id = ?", (task_id,))
+        conn.execute("UPDATE work_sessions SET status_now = 'completed' WHERE task_id = ?", (task_id,))
+        conn.commit()
+        conn.close()
+        self.date_selected()  
+
+    def delete_item(self):
+        task_selected = self.task_list.selection()
+        session_selected = self.session_list.selection()
+        event_selected = self.event_list.selection()
+
+        if not task_selected and not session_selected and not event_selected:
+            messagebox.showinfo("Nothing selected", "Click on a task / session / event first.")
+            return            
+
+        conn = sqlite3.connect(DB_PATH)
+
+        if task_selected:
+            conn.execute("DELETE FROM tasks WHERE task_id = ?", (task_selected[0],))
+            conn.execute("DELETE FROM work_sessions WHERE task_id = ?", (task_selected[0],))
+        elif session_selected:
+            conn.execute("DELETE FROM work_sessions WHERE session_id = ?", (session_selected[0],))   
+        elif event_selected:
+            conn.execute("DELETE FROM events WHERE event_id = ?", (event_selected[0],))   
+
+        conn.commit()
+        conn.close()
+        self.date_selected()  
 
     def generate_work(self):
+        tasks = genetic3.load_flexible_tasks()
+        if not tasks:
+            messagebox.showinfo("Nothing to schedule", "No active tasks right now.")
+            return
         genetic = genetic3.genetic_algor(30, 60, 0.1)
+
+        conn = get_db()
+        conn.execute("DELETE FROM work_sessions WHERE status_now = 'suggested'")
+        for sesh in genetic:
+            conn.execute("INSERT INTO work_sessions (task_id, start_time, end_time, status_now) VALUES" \
+            "(?, ?, ?, ?)", 
+            (sesh[0], sesh[1], sesh[2], sesh[3]))
+        conn.commit()
+        conn.close()
+        self.date_selected()
 
     def task_popup(self):
         self.t_popup = tk.Toplevel(self.root)
@@ -206,6 +311,7 @@ class SmartCalendarApp:
         conn.commit()
         conn.close()
         self.t_popup.destroy()
+        self.date_selected()
 
     # event popup 
     def event_popup(self):
@@ -301,7 +407,8 @@ class SmartCalendarApp:
         )     
         conn.commit()
         conn.close()
-        self.e_popup.destroy()      
+        self.e_popup.destroy() 
+        self.date_selected()     
 
     def submit_e_non(self):
         title = self.e_title_entry.get().strip()
@@ -397,7 +504,8 @@ class SmartCalendarApp:
         )     
         conn.commit()
         conn.close()
-        self.w_popup.destroy()       
+        self.w_popup.destroy()   
+        self.date_selected()    
 
     def preferences(self):
         # unavailable windows
@@ -448,7 +556,8 @@ class SmartCalendarApp:
         )     
         conn.commit()
         conn.close()
-        self.s_popup.destroy()   
+        self.s_popup.destroy()  
+        self.date_selected() 
 
            
 root = tk.Tk()
