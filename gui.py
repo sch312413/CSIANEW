@@ -24,7 +24,7 @@ def get_db():
 ensure_db()
 
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-import genetic3
+import genetic2
 class SmartCalendarApp:
     def __init__(self, root):
         self.root = root
@@ -34,7 +34,6 @@ class SmartCalendarApp:
         self.toolbar(root)
         self.calendar(root)
         self.bottom_bar(root)
-        # self.refresh(root)
 
     def toolbar(self, root):
         toolbar = ttk.Frame(root)
@@ -60,7 +59,7 @@ class SmartCalendarApp:
         self.left = ttk.Frame(container)
         self.left.pack(side="left")
         self.all_column = ("Title", 'Item Type', "Date")
-        self.all_list = ttk.Treeview(self.left, columns=self.all_column, show="headings", height=43)
+        self.all_list = ttk.Treeview(self.left, columns=self.all_column, show="headings", height=37)
         self.all_list.pack()
 
         self.cal = Calendar(
@@ -157,7 +156,7 @@ class SmartCalendarApp:
         for row in conn.execute("SELECT task_id, title, due_time, status_now FROM tasks"):
             dt = datetime.fromisoformat(row["due_time"])
             tasks.append({"task_id": row["task_id"], "title": row["title"], "date": dt.date(), "due_time": dt.time(), "status": row["status_now"]})
-            all.append({"type": "Event", "title": row["title"], "date": dt.date()})
+            all.append({"type": "Task deadline", "title": row["title"], "date": dt.date()})
         for row in conn.execute("SELECT session_id, task_id, start_time, end_time, status_now FROM work_sessions"):
             start_dt = datetime.fromisoformat(row["start_time"])
             end_dt = datetime.fromisoformat(row["end_time"])
@@ -183,6 +182,7 @@ class SmartCalendarApp:
 
     def accept_selected(self):
         selected = self.session_list.selection()
+        # print(selected)
         if not selected:
             messagebox.showinfo("Nothing selected", "Click a work session first.")
             return
@@ -190,6 +190,12 @@ class SmartCalendarApp:
 
         conn = sqlite3.connect(DB_PATH)
         conn.execute("UPDATE work_sessions SET status_now = 'accepted' WHERE session_id = ?", (session_id,))
+        ws = conn.execute("SELECT task_id, start_time, end_time FROM work_sessions WHERE session_id = ?", (session_id,)).fetchone()
+        task_id, start, end = ws[0], ws[1], ws[2]
+        start, end = datetime.fromisoformat(start), datetime.fromisoformat(end)
+        scheduled_minutes = conn.execute("SELECT scheduled_minute FROM tasks WHERE task_id = ?", (task_id,)).fetchone()[0]
+        time = int((end - start).total_seconds()) // 60
+        conn.execute(f"UPDATE tasks SET scheduled_minute = ? WHERE task_id = ?", (scheduled_minutes - time, task_id,))
         conn.commit()
         conn.close()
         self.date_selected()    
@@ -209,7 +215,7 @@ class SmartCalendarApp:
         task_id = selected[0]
         conn = sqlite3.connect(DB_PATH)
         conn.execute("UPDATE tasks SET status_now = 'completed' WHERE task_id = ?", (task_id,))
-        conn.execute("UPDATE work_sessions SET status_now = 'completed' WHERE task_id = ?", (task_id,))
+        conn.execute("DELETE work_sessions WHERE task_id = ?", (task_id,))
         conn.commit()
         conn.close()
         self.date_selected()  
@@ -238,11 +244,11 @@ class SmartCalendarApp:
         self.date_selected()  
 
     def generate_work(self):
-        tasks = genetic3.load_flexible_tasks()
+        tasks = genetic2.load_flexible_tasks()
         if not tasks:
             messagebox.showinfo("Nothing to schedule", "No active tasks right now.")
             return
-        genetic = genetic3.genetic_algor(30, 60, 0.1)
+        genetic = genetic2.genetic_algor(30, 60, 0.1)
 
         conn = get_db()
         conn.execute("DELETE FROM work_sessions WHERE status_now = 'suggested'")
