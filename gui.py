@@ -48,7 +48,7 @@ class SmartCalendarApp:
         bottombar = ttk.Frame(root)
         bottombar.pack(fill="x", padx = 10, pady = 10)
         smart_schedule = ttk.Button(bottombar, text="Generate smart schedule", command=self.generate_work).pack(side="left", padx = 5)
-        acccept_work = ttk.Button(bottombar, text="Accept work session", command=self.accept_selected).pack(side="left", padx = 5)
+        accept_work = ttk.Button(bottombar, text="Accept work session", command=self.accept_selected).pack(side="left", padx = 5)
         complete_work = ttk.Button(bottombar, text="Complete task", command=self.complete_task).pack(side="left", padx = 5)
         delete = ttk.Button(bottombar, text="Delete selected item", command=self.delete_item).pack(side="left", padx = 5)
 
@@ -82,9 +82,9 @@ class SmartCalendarApp:
         self.event_list = ttk.Treeview(self.right, columns=self.event_column, show="headings", height=6)
         for c in self.event_column: self.event_list.heading(c, text=c); self.event_list.column(c, width=250 if c=="Title" else 150, stretch=False)
         
-        self.task_column = ("Title", 'Time', "Status")
+        self.task_column = ("Title", 'Time', "Scheduled Minutes", "Status")
         self.task_list = ttk.Treeview(self.right, columns=self.task_column, show="headings", height=6)
-        for c in self.task_column: self.task_list.heading(c, text=c); self.task_list.column(c, width=250 if c=="Title" else 150, stretch=False)
+        for c in self.task_column: self.task_list.heading(c, text=c); self.task_list.column(c, width=250 if c=="Title" else 100, stretch=False)
 
         self.session_column = ("Title", 'Starting time', "Ending time", "Status")
         self.session_list = ttk.Treeview(self.right, columns=self.session_column, show="headings", height=6)
@@ -132,7 +132,7 @@ class SmartCalendarApp:
 
         for task in tasks:
             if task["date"] == selected: 
-                self.task_list.insert("", "end", iid=task["task_id"], values=(task["title"], task["due_time"], task["status"]))         
+                self.task_list.insert("", "end", iid=task["task_id"], values=(task["title"], task["due_time"], task["minutes"], task["status"]))         
 
         for sesh in work_seshs:
             if sesh["date"] == selected:
@@ -153,25 +153,28 @@ class SmartCalendarApp:
     def get_all_information(self):
         conn = get_db()
         tasks, work_sesh, events, all = [], [], [], []
-        for row in conn.execute("SELECT task_id, title, due_time, status_now FROM tasks"):
+        for row in conn.execute("SELECT task_id, title, due_time, status_now, total_minutes, scheduled_minute FROM tasks"):
             dt = datetime.fromisoformat(row["due_time"])
-            tasks.append({"task_id": row["task_id"], "title": row["title"], "date": dt.date(), "due_time": dt.time(), "status": row["status_now"]})
-            all.append({"type": "Task deadline", "title": row["title"], "date": dt.date()})
+            tasks.append({"task_id": row["task_id"], "title": row["title"], "date": dt.date(), "due_time": dt.time(), "minutes": f"{row["scheduled_minute"]}/{row["total_minutes"]}", "status": row["status_now"]})
+            if dt.date() >= datetime.now().date():
+                all.append({"type": "Task deadline", "title": row["title"], "date": dt.date()})
         for row in conn.execute("SELECT session_id, task_id, start_time, end_time, status_now FROM work_sessions"):
             start_dt = datetime.fromisoformat(row["start_time"])
             end_dt = datetime.fromisoformat(row["end_time"])
             title = conn.execute("SELECT title FROM tasks WHERE task_id = ?", (row["task_id"],)).fetchone()
             work_sesh.append({"session_id": row["session_id"], "title": title["title"], "date": start_dt.date(), "start_time": start_dt.time(), "end_time": end_dt.time(), "status": row["status_now"]})
-            all.append({"type": "Work Session", "title": title["title"], "date": start_dt.date()})
+            if start_dt.date() >= datetime.now().date():
+                all.append({"type": "Work Session", "title": title["title"], "date": start_dt.date()})
         for row in conn.execute("SELECT event_id, title, starting_datetime, ending_datetime, whole_day, recurrence FROM events"):
             dt_start = datetime.fromisoformat(row["starting_datetime"])
             dt_end = datetime.fromisoformat(row["ending_datetime"])
             curr = dt_start
             while True:
-                all.append({"type": "Event", "title": row["title"], "date": curr.date()})
-                curr += timedelta(days=1)
-                if curr.date() > dt_end.date():
-                    break
+                if curr.date() >= datetime.now().date():
+                    all.append({"type": "Event", "title": row["title"], "date": curr.date()})
+                    curr += timedelta(days=1)
+                    if curr.date() > dt_end.date():
+                        break
 
             if row["whole_day"] == 0:
                 events.append({"event_id": row["event_id"], "recurrence": row["recurrence"], "whole_day": row["whole_day"], "title": row["title"], "date": dt_start.date(), "starting_datetime": dt_start.time(), "ending_datetime": dt_end.time()})
@@ -195,7 +198,7 @@ class SmartCalendarApp:
         start, end = datetime.fromisoformat(start), datetime.fromisoformat(end)
         scheduled_minutes = conn.execute("SELECT scheduled_minute FROM tasks WHERE task_id = ?", (task_id,)).fetchone()[0]
         time = int((end - start).total_seconds()) // 60
-        conn.execute(f"UPDATE tasks SET scheduled_minute = ? WHERE task_id = ?", (scheduled_minutes - time, task_id,))
+        conn.execute(f"UPDATE tasks SET scheduled_minute = ? WHERE task_id = ?", (scheduled_minutes + time, task_id,))
         conn.commit()
         conn.close()
         self.date_selected()    
@@ -224,9 +227,10 @@ class SmartCalendarApp:
         task_selected = self.task_list.selection()
         session_selected = self.session_list.selection()
         event_selected = self.event_list.selection()
+        window_selected = self.window_list.selection()
 
-        if not task_selected and not session_selected and not event_selected:
-            messagebox.showinfo("Nothing selected", "Click on a task / session / event first.")
+        if not task_selected and not session_selected and not event_selected and not window_selected:
+            messagebox.showinfo("Nothing selected", "Click on a task / session / event / unavailable window first.")
             return            
 
         conn = sqlite3.connect(DB_PATH)
@@ -238,6 +242,8 @@ class SmartCalendarApp:
             conn.execute("DELETE FROM work_sessions WHERE session_id = ?", (session_selected[0],))   
         elif event_selected:
             conn.execute("DELETE FROM events WHERE event_id = ?", (event_selected[0],))   
+        else:
+            conn.execute("DELETE FROM unavailable_windows WHERE rule_id = ?", (window_selected[0],))   
 
         conn.commit()
         conn.close()
@@ -297,6 +303,10 @@ class SmartCalendarApp:
 
         try: check = datetime.fromisoformat(due)
         except: check = -1 
+
+        if check < datetime.now():
+            messagebox.showwarning("Error", "Please enter a deadline date that is later than current time!")
+            return             
 
         try: minutes = int(minutes)
         except: minutes = -1
@@ -404,6 +414,10 @@ class SmartCalendarApp:
         if check_start == -1 or check_end == -1:
             messagebox.showwarning("Error", "Please follow the exact date format!")
             return  
+        
+        if check_start > check_end:
+            messagebox.showwarning("Error", "End date needs to be after start!")
+            return 
 
         conn = sqlite3.connect(DB_PATH)
         conn.execute(
@@ -441,6 +455,10 @@ class SmartCalendarApp:
         if check_start == -1 or check_end == -1:
             messagebox.showwarning("Error", "Please follow the exact date format!")
             return  
+
+        if check_start > check_end:
+            messagebox.showwarning("Error", "End time needs to be after start!")
+            return 
 
         conn = sqlite3.connect(DB_PATH)
         conn.execute(
@@ -500,6 +518,16 @@ class SmartCalendarApp:
         try: max_sesh = int(max_sesh) 
         except: 
             messagebox.showwarning("Error", "'Maximum session minutes' must be an integer!") 
+            return 
+
+        if max_work <= 0:
+            messagebox.showwarning("Error", "Maximum working minute must be greater than 0!") 
+            return 
+        if min_break < 0:
+            messagebox.showwarning("Error", "Minimum resting period must be greater or equal to 0!") 
+            return 
+        if max_sesh <= 0:
+            messagebox.showwarning("Error", "Minimum break between work sessions must be greater than 0!") 
             return 
 
         conn = sqlite3.connect(DB_PATH)

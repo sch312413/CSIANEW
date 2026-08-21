@@ -88,8 +88,6 @@ def day_unavailable():
             whole_day = [slot for slot in whole_day if slot not in time_phase(begin_hour, end_hour, begin_minute, end_minute)[1:-1]]
     return sorted(whole_day)
 
-# print(day_unavailable())
-
 # iterating thru all of the times that are 
 def fixed_before_time(window_start, window_end): # both should be datetime already 
     concrete_blocks = []
@@ -116,14 +114,14 @@ def fixed_before_time(window_start, window_end): # both should be datetime alrea
     return concrete_blocks
     
 # gene generation 
-curr = day_unavailable()
 def random_gene_generation(task_id, session_length, dates_before_due, real_due): # i want to input the datetime type 
     while True:
         random_date = random.choice(dates_before_due)
-        random_time = random.choice(curr)
+        
+        random_time = random.choice(day_unavailable())
         start = combine_date_time(datetime.strftime(random_date, "%Y-%m-%d"), random_time)
         end = start + timedelta(minutes=session_length)
-        if end <= real_due and end.strftime('%H:%M') in curr:
+        if end <= real_due and end.strftime('%H:%M') in day_unavailable():
             return (task_id, start.strftime('%Y-%m-%dT%H:%M'), end.strftime('%Y-%m-%dT%H:%M'), 'suggested')
 
 def generating_minutes(working_hours, max_working):
@@ -200,12 +198,11 @@ def fitness(individual, fixed_blocks, settings, tasks_by_id):
     max_working = settings[1]
     min_break = settings[2]
 
+    score -= len(individual)*5
+
     for gene in individual:
-        if int(gene[1][-2:]) % 5 != 0:
-            score -= 50
         if int(gene[1][-2:]) % 30 != 0:
             score -= 10
-        
         start, end = datetime.fromisoformat(gene[1]), datetime.fromisoformat(gene[2])
         if start.date() not in per_day: 
             per_day[start.date()] = [[start, end]]
@@ -215,15 +212,21 @@ def fitness(individual, fixed_blocks, settings, tasks_by_id):
         for block_start, block_end in fixed_blocks:
             if overlaps(start, end, block_start, block_end):
                 score -= 50 
+        
+
+    for i in range(len(individual)):
+        for j in range(i+1, len(individual)):
+            gene1, gene2 = individual[i], individual[j]
+            gene1_start, gene1_end = datetime.fromisoformat(gene1[1]), datetime.fromisoformat(gene1[2])
+            gene2_start, gene2_end = datetime.fromisoformat(gene2[1]), datetime.fromisoformat(gene2[2])
+            if overlaps(gene1_start, gene1_end, gene2_start, gene2_end):
+                score -= 50 
 
     for date in per_day.values():
-        # print(date, 'yes')
         working_time = 0 
         for i in range(len(date)):
             time1_start, time1_end = date[i][0], date[i][1]
-            current = int((time1_end - time1_start).total_seconds()//60)
-            score += current 
-            working_time += current
+            working_time += int((time1_end - time1_start).total_seconds()//60)
             for j in range(i+1, len(date)):
                 time2_start, time2_end = date[j][0], date[j][1]
                 difference1 = int((time1_start - time2_end).total_seconds()//60)
@@ -232,8 +235,6 @@ def fitness(individual, fixed_blocks, settings, tasks_by_id):
                     score -= (difference1 - min_break)
                 elif difference2 < min_break and difference2 > 0:
                     score -= (difference2 - min_break)
-                if overlaps(time1_start, time1_end, time2_start, time2_end):
-                    score -= 50 
 
         if working_time > max_working:
             score -= (working_time - max_working)
@@ -263,7 +264,7 @@ def crossover(parent_a, parent_b, task_ids):
             child.extend([gene for gene in parent_b if gene[0] == task_id])
     return child 
 
-def mutate(today, individual, mutation_rate, tasks_by_id):
+def mutate(today, individual, mutation_rate, tasks_by_id, settings, available_slots):
     mutated = []
     for gene in individual:
         if random.random() < mutation_rate:
@@ -288,7 +289,6 @@ def genetic_algor(population_size, generations, mutation_rate):
     tasks_by_id = {t[0]: t for t in tasks}
     task_ids = [t[0] for t in tasks]
     settings = load_constraints_tasks()[0]
-
     
     furthest_due = max((datetime.fromisoformat(t[2]) for t in tasks))
 
@@ -310,7 +310,7 @@ def genetic_algor(population_size, generations, mutation_rate):
         while len(next_population) < population_size:
             parent_a = select_parent(scored)
             parent_b = select_parent(scored)
-            child = mutate(CEIL, crossover(parent_a, parent_b, task_ids), mutation_rate, tasks_by_id)
+            child = mutate(CEIL, crossover(parent_a, parent_b, task_ids), mutation_rate, tasks_by_id, settings, day_unavailable())
             next_population.append(child)
         population = next_population
 
